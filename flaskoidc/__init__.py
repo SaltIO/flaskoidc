@@ -3,6 +3,7 @@ import logging
 import datetime
 
 import time
+from urllib.parse import urlencode
 from authlib.integrations.flask_client import OAuth
 from authlib.oidc.core.errors import LoginRequiredError
 from flask import redirect, Flask, request, session, abort
@@ -22,12 +23,17 @@ class FlaskOIDC(Flask):
         _current_time = round(time.time())
         # Whitelisted Endpoints i.e., health checks and status url
         whitelisted_endpoints = self.config.get("WHITELISTED_ENDPOINTS")
-        LOGGER.debug(f"Whitelisted Endpoint: {whitelisted_endpoints}")
 
         # Add auth endpoints to whitelisted endpoint as well, so not to check for token on that
         whitelisted_endpoints += (
             f",login,logout,{self.config.get('REDIRECT_URI').strip('/')}"
         )
+
+        LOGGER.debug(f"Whitelisted Endpoint: {whitelisted_endpoints}")
+        LOGGER.debug(f"request.url={request.url}")
+        LOGGER.debug(f"request.path={request.path}")
+        LOGGER.debug(f"request.path.strip('/')={request.path.strip('/')}")
+        LOGGER.debug(f"request.endpoint={request.endpoint}")
 
         if request.path.strip("/") in whitelisted_endpoints.split(
             ","
@@ -81,8 +87,8 @@ class FlaskOIDC(Flask):
         if _provider not in _CONFIGS.keys():
             LOGGER.info(
                 f"""
-            [flaskoidc Notice] I have not verified the OIDC Provider that you have 
-            selected i.e., "{_provider}" with this package yet. 
+            [flaskoidc Notice] I have not verified the OIDC Provider that you have
+            selected i.e., "{_provider}" with this package yet.
             If you encounter any issue while using this library with "{_provider}",
             please do not hesitate to create an issue on Github. (https://github.com/verdan/flaskoidc)
             """
@@ -116,11 +122,14 @@ class FlaskOIDC(Flask):
 
         @self.route("/login")
         def login():
+            LOGGER.debug(f"LOGIN")
             redirect_uri = url_for("auth", _external=True, _scheme=self.config.get("SCHEME"))
+            LOGGER.debug(f"redirect_uri={redirect_uri}")
             return self.auth_client.authorize_redirect(redirect_uri)
 
         @self.route(self.config.get("REDIRECT_URI"))
         def auth():
+            LOGGER.debug(f"AUTH")
             _db_keys = [
                 "access_token",
                 "expires_in",
@@ -133,6 +142,8 @@ class FlaskOIDC(Flask):
                 token = self.auth_client.authorize_access_token()
                 user = self.auth_client.parse_id_token(token, token.get('nonce'))
                 user_id = user.get(self.config.get("USER_ID_FIELD"))
+                # LOGGER.debug(f"user={user}")
+                # LOGGER.debug(f"user_id={user_id}")
                 if not user_id:
                     raise BadRequest(
                         "Make sure to set the proper 'FLASK_OIDC_USER_ID_FIELD' env variable "
@@ -141,25 +152,30 @@ class FlaskOIDC(Flask):
                         f"response from OIDC Provider. Available Keys are: ({', '.join(user.keys())})"
                     )
                 # Remove unnecessary keys from the token
+                LOGGER.debug(f"token={token}")
                 db_token = {_key: token.get(_key) for _key in _db_keys}
+                LOGGER.debug(f"db_token={db_token}")
                 OAuth2Token.save(name=_provider, user_id=user_id, **db_token)
                 session["user"] = user
                 session["user"]["__id"] = user_id
                 redirectUrl = self.config.get("OVERWRITE_REDIRECT_URI")
+                # LOGGER.debug(f"redirectUrl(OVERWRITE)={redirectUrl}")
                 if redirectUrl:
                     return redirect(redirectUrl)
                 url = request.cookies.get("failed_authentication_url")
+                # LOGGER.debug(f"failed_authentication_url={url}")
                 if url:
                     resp = redirect(url)
                     redirectUrl = url
                     return resp.set_cookie("failed_authentication_url", "", expires=datetime.datetime.now())
                 return redirect("")
             except Exception as ex:
-                LOGGER.exception(ex)
+                LOGGER.exception("Failed in auth: ", ex)
                 raise ex
 
         @self.route("/logout")
         def logout():
+            LOGGER.debug(f"LOGOUT")
             if session.get("user"):
                 OAuth2Token.delete(name=_provider, user_id=session["user"]["__id"])
             session.pop("user", None)
